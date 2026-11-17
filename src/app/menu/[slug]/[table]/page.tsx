@@ -39,6 +39,7 @@ interface Restaurant {
   wifi_password?: string;
   welcome_promo?: string;
   whatsapp_number?: string;
+  cover_charge?: number;
 }
 
 function MenuContent() {
@@ -50,6 +51,7 @@ function MenuContent() {
   const [items, setItems] = useState<MenuItem[]>([]);
   const [cart, setCart] = useState<Record<string, number>>({});
   const [notes, setNotes] = useState('');
+  const [guestsCount, setGuestsCount] = useState(2);
   const [lang, setLang] = useState<'it' | 'en'>('it');
   const [loading, setLoading] = useState(true);
   const [orderSent, setOrderSent] = useState(false);
@@ -114,6 +116,10 @@ function MenuContent() {
   const totalAmount = items.reduce((sum, item) => sum + (cart[item.id] || 0) * Number(item.price), 0);
   const totalCount = Object.values(cart).reduce((a, b) => a + b, 0);
 
+  const unitCover = Number(restaurant?.cover_charge || 0);
+  const totalCover = unitCover > 0 ? unitCover * guestsCount : 0;
+  const grandTotal = totalAmount + totalCover;
+
   const sendOrder = async () => {
     if (!restaurant || totalCount === 0) return;
     const orderItems = items
@@ -125,11 +131,20 @@ function MenuContent() {
         price: Number(i.price),
       }));
 
+    if (totalCover > 0) {
+      orderItems.push({
+        id: 'cover-charge',
+        name: `Coperto (${guestsCount} pers.)`,
+        quantity: guestsCount,
+        price: unitCover,
+      });
+    }
+
     const { error } = await supabase.from('orders').insert({
       restaurant_id: restaurant.id,
       table_number: table,
       items: orderItems,
-      total: totalAmount,
+      total: grandTotal,
       notes,
       status: 'pending',
     });
@@ -252,7 +267,7 @@ function MenuContent() {
   );
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 pb-32">
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 pb-40">
       {/* Header */}
       <header className="sticky top-0 z-20 bg-neutral-900/95 backdrop-blur border-b border-neutral-800 px-4 py-3">
         <div className="max-w-xl mx-auto flex items-center justify-between">
@@ -369,6 +384,33 @@ function MenuContent() {
       {totalCount > 0 && (
         <div className="fixed bottom-0 inset-x-0 bg-neutral-900 border-t border-neutral-800 p-4 z-30">
           <div className="max-w-xl mx-auto space-y-2.5">
+            {unitCover > 0 && (
+              <div className="flex items-center justify-between text-xs bg-neutral-800/80 px-3 py-1.5 rounded-lg">
+                <span className="text-neutral-300">
+                  {lang === 'it'
+                    ? `Coperti (€ ${unitCover.toFixed(2)}/pers.)`
+                    : `Cover charge (€ ${unitCover.toFixed(2)}/guest)`}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setGuestsCount(Math.max(1, guestsCount - 1))}
+                    className="w-6 h-6 bg-neutral-700 rounded font-bold"
+                  >
+                    -
+                  </button>
+                  <span className="font-bold">{guestsCount}</span>
+                  <button
+                    type="button"
+                    onClick={() => setGuestsCount(guestsCount + 1)}
+                    className="w-6 h-6 bg-neutral-700 rounded font-bold"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+            )}
+
             <input
               type="text"
               value={notes}
@@ -382,8 +424,8 @@ function MenuContent() {
             >
               <Send className="w-4 h-4" />
               {lang === 'it'
-                ? `Invia Ordine (${totalCount}) • € ${totalAmount.toFixed(2)}`
-                : `Send Order (${totalCount}) • € ${totalAmount.toFixed(2)}`}
+                ? `Invia Ordine (${totalCount}) • € ${grandTotal.toFixed(2)}`
+                : `Send Order (${totalCount}) • € ${grandTotal.toFixed(2)}`}
             </button>
           </div>
         </div>

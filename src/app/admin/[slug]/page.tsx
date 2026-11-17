@@ -19,6 +19,7 @@ import {
   Users,
   MessageCircle,
   Download,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 interface Restaurant {
@@ -31,6 +32,7 @@ interface Restaurant {
   wifi_password?: string;
   welcome_promo?: string;
   whatsapp_number?: string;
+  cover_charge?: number;
 }
 
 interface MenuItem {
@@ -72,6 +74,12 @@ interface Customer {
   created_at: string;
 }
 
+interface OrderRecord {
+  id: string;
+  total: number;
+  created_at: string;
+}
+
 function AdminContent() {
   const params = useParams();
   const slug = decodeURIComponent(params.slug as string);
@@ -86,15 +94,18 @@ function AdminContent() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [totalRevenue, setTotalRevenue] = useState(0);
-  const [totalOrdersCount, setTotalOrdersCount] = useState(0);
+  const [ordersList, setOrdersList] = useState<OrderRecord[]>([]);
+  const [revenueFilter, setRevenueFilter] = useState<'today' | 'week' | 'all'>('today');
 
-  // Form nuovo piatto
+  // Form nuovo piatto & Importazione massiva
   const [newName, setNewName] = useState('');
   const [newNameEn, setNewNameEn] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [newPrice, setNewPrice] = useState('');
   const [newCategory, setNewCategory] = useState('Primi Piatti');
+  const [showBulkImport, setShowBulkImport] = useState(false);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkImporting, setBulkImporting] = useState(false);
 
   // Impostazioni & QR & Promo WhatsApp
   const [googleUrl, setGoogleUrl] = useState('');
@@ -102,6 +113,7 @@ function AdminContent() {
   const [wifiPassword, setWifiPassword] = useState('');
   const [welcomePromo, setWelcomePromo] = useState('');
   const [whatsappNumber, setWhatsappNumber] = useState('');
+  const [coverCharge, setCoverCharge] = useState('0');
   const [promoBroadcastText, setPromoBroadcastText] = useState(
     'Ciao! Questo weekend ti aspettiamo con una sorpresa speciale riservata ai nostri clienti!'
   );
@@ -124,6 +136,7 @@ function AdminContent() {
         setWifiPassword(data.wifi_password || 'Ospiti2026');
         setWelcomePromo(data.welcome_promo || 'Mostra questa schermata al cameriere per un caffè o amaro offerto!');
         setWhatsappNumber(data.whatsapp_number || '');
+        setCoverCharge(String(data.cover_charge || 0));
       }
     }
     fetchRestaurant();
@@ -134,7 +147,7 @@ function AdminContent() {
       supabase.from('menu_items').select('*').eq('restaurant_id', restId).order('category'),
       supabase.from('bookings').select('*').eq('restaurant_id', restId).order('booking_date', { ascending: true }),
       supabase.from('reviews').select('*').eq('restaurant_id', restId).order('created_at', { ascending: false }),
-      supabase.from('orders').select('total').eq('restaurant_id', restId),
+      supabase.from('orders').select('id, total, created_at').eq('restaurant_id', restId),
       supabase.from('customers').select('*').eq('restaurant_id', restId).order('created_at', { ascending: false }),
     ]);
 
@@ -142,10 +155,7 @@ function AdminContent() {
     if (bks) setBookings(bks);
     if (revs) setReviews(revs);
     if (custs) setCustomers(custs);
-    if (ords) {
-      setTotalOrdersCount(ords.length);
-      setTotalRevenue(ords.reduce((sum, o) => sum + Number(o.total || 0), 0));
-    }
+    if (ords) setOrdersList(ords);
   };
 
   useEffect(() => {
@@ -224,6 +234,45 @@ function AdminContent() {
     }
   };
 
+  // Importazione massiva: "Categoria | Nome Piatto | Prezzo | Descrizione"
+  const handleBulkImport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!restaurant || !bulkText.trim()) return;
+    setBulkImporting(true);
+
+    const lines = bulkText
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    const payload = lines
+      .map((line) => {
+        const parts = line.split('|').map((p) => p.trim());
+        if (parts.length < 3) return null;
+        const parsedPrice = parseFloat(parts[2].replace('€', '').replace(',', '.').trim());
+        if (isNaN(parsedPrice)) return null;
+        return {
+          restaurant_id: restaurant.id,
+          category: parts[0] || 'Menu',
+          name: parts[1],
+          price: parsedPrice,
+          description: parts[3] || null,
+          available: true,
+        };
+      })
+      .filter(Boolean);
+
+    if (payload.length > 0) {
+      const { data } = await supabase.from('menu_items').insert(payload).select();
+      if (data) {
+        setMenuItems((prev) => [...prev, ...data]);
+        setBulkText('');
+        setShowBulkImport(false);
+      }
+    }
+    setBulkImporting(false);
+  };
+
   const toggleAvailability = async (item: MenuItem) => {
     const nextStatus = !item.available;
     await supabase.from('menu_items').update({ available: nextStatus }).eq('id', item.id);
@@ -243,6 +292,8 @@ function AdminContent() {
   const saveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!restaurant) return;
+    const parsedCover = parseFloat(coverCharge.replace(',', '.')) || 0;
+
     await supabase
       .from('restaurants')
       .update({
@@ -251,6 +302,7 @@ function AdminContent() {
         wifi_password: wifiPassword,
         welcome_promo: welcomePromo,
         whatsapp_number: whatsappNumber,
+        cover_charge: parsedCover,
       })
       .eq('id', restaurant.id);
 
@@ -261,6 +313,7 @@ function AdminContent() {
       wifi_password: wifiPassword,
       welcome_promo: welcomePromo,
       whatsapp_number: whatsappNumber,
+      cover_charge: parsedCover,
     });
     setSettingsSaved(true);
     setTimeout(() => setSettingsSaved(false), 3000);
@@ -293,6 +346,23 @@ function AdminContent() {
     a.download = `clienti-${slug}.csv`;
     a.click();
   };
+
+  // Calcolo Chiusura Cassa filtrata
+  const now = new Date();
+  const filteredOrders = ordersList.filter((o) => {
+    const d = new Date(o.created_at);
+    if (revenueFilter === 'today') {
+      return d.toDateString() === now.toDateString();
+    }
+    if (revenueFilter === 'week') {
+      const weekAgo = new Date();
+      weekAgo.setDate(now.getDate() - 7);
+      return d >= weekAgo;
+    }
+    return true;
+  });
+  const filteredRevenue = filteredOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
+  const avgOrderValue = filteredOrders.length > 0 ? filteredRevenue / filteredOrders.length : 0;
 
   if (!restaurant) {
     return <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center">Caricamento pannello...</div>;
@@ -341,14 +411,14 @@ function AdminContent() {
         <div className="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 className="text-xl font-bold text-amber-400">Admin • {restaurant.name}</h1>
-            <div className="flex gap-3 text-xs text-neutral-400 mt-1">
+            <div className="flex flex-wrap gap-3 text-xs text-neutral-400 mt-1">
               <a
                 href={`/kds/${slug}`}
                 target="_blank"
                 rel="noreferrer"
                 className="hover:text-white flex items-center gap-1"
               >
-                Apri KDS Cucina <ExternalLink className="w-3 h-3" />
+                KDS Cucina <ExternalLink className="w-3 h-3" />
               </a>
               <a
                 href={`/menu/${slug}/Tavolo%201`}
@@ -356,29 +426,51 @@ function AdminContent() {
                 rel="noreferrer"
                 className="hover:text-white flex items-center gap-1"
               >
-                Anteprima Menu <ExternalLink className="w-3 h-3" />
+                Menu Tavolo <ExternalLink className="w-3 h-3" />
+              </a>
+              <a
+                href={`/asporto/${slug}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-purple-400 hover:text-purple-300 flex items-center gap-1 font-semibold"
+              >
+                Link Asporto <ExternalLink className="w-3 h-3" />
               </a>
             </div>
           </div>
 
           <div className="flex flex-wrap gap-2.5">
             <div className="bg-neutral-800/80 border border-neutral-700 px-3 py-2 rounded-xl">
-              <p className="text-[11px] text-neutral-400 flex items-center gap-1">
-                <TrendingUp className="w-3 h-3 text-emerald-400" /> Ordini Totali
+              <div className="flex items-center justify-between gap-2 text-[11px] text-neutral-400">
+                <span className="flex items-center gap-1">
+                  <TrendingUp className="w-3 h-3 text-emerald-400" /> Incassi
+                </span>
+                <select
+                  value={revenueFilter}
+                  onChange={(e) => setRevenueFilter(e.target.value as 'today' | 'week' | 'all')}
+                  className="bg-neutral-900 text-amber-400 font-bold rounded px-1 py-0.5 text-[10px]"
+                >
+                  <option value="today">Oggi</option>
+                  <option value="week">7 Giorni</option>
+                  <option value="all">Sempre</option>
+                </select>
+              </div>
+              <p className="font-bold text-sm mt-0.5">
+                {filteredOrders.length} ord. • € {filteredRevenue.toFixed(2)}{' '}
+                <span className="text-[11px] font-normal text-neutral-400">(media € {avgOrderValue.toFixed(2)})</span>
               </p>
-              <p className="font-bold text-sm">{totalOrdersCount} • € {totalRevenue.toFixed(2)}</p>
             </div>
             <div className="bg-neutral-800/80 border border-neutral-700 px-3 py-2 rounded-xl">
               <p className="text-[11px] text-neutral-400 flex items-center gap-1">
                 <Users className="w-3 h-3 text-sky-400" /> Contatti WA
               </p>
-              <p className="font-bold text-sm">{customers.length}</p>
+              <p className="font-bold text-sm mt-0.5">{customers.length}</p>
             </div>
             <div className="bg-neutral-800/80 border border-neutral-700 px-3 py-2 rounded-xl">
               <p className="text-[11px] text-neutral-400 flex items-center gap-1">
                 <ShieldAlert className="w-3 h-3 text-amber-400" /> Reclami Bloccati
               </p>
-              <p className="font-bold text-sm">{reviews.length}</p>
+              <p className="font-bold text-sm mt-0.5">{reviews.length}</p>
             </div>
           </div>
         </div>
@@ -407,7 +499,7 @@ function AdminContent() {
               activeTab === 'customers' ? 'bg-amber-500 text-neutral-950' : 'bg-neutral-800 text-neutral-300'
             }`}
           >
-            <Users className="w-4 h-4" /> Clienti & WA ({customers.length})
+            <Users className="w-4 h-4" /> Clienti &amp; WA ({customers.length})
           </button>
           <button
             onClick={() => setActiveTab('reviews')}
@@ -415,7 +507,7 @@ function AdminContent() {
               activeTab === 'reviews' ? 'bg-amber-500 text-neutral-950' : 'bg-neutral-800 text-neutral-300'
             }`}
           >
-            <ShieldAlert className="w-4 h-4" /> Scudo & Config
+            <ShieldAlert className="w-4 h-4" /> Scudo &amp; Config
           </button>
           <button
             onClick={() => setActiveTab('qr')}
@@ -429,65 +521,99 @@ function AdminContent() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 pt-6">
-        {/* TAB 1: GESTIONE MENU */}
+        {/* TAB 1: GESTIONE MENU + IMPORTAZIONE RAPIDA */}
         {activeTab === 'menu' && (
           <div className="space-y-6">
-            <form
-              onSubmit={handleAddDish}
-              className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 space-y-3"
-            >
-              <h2 className="font-bold text-sm text-amber-400 flex items-center gap-1.5">
-                <Plus className="w-4 h-4" /> Aggiungi Nuovo Piatto
-              </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                <input
-                  required
-                  type="text"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Nome piatto (IT)*"
-                  className="bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
-                />
-                <input
-                  type="text"
-                  value={newNameEn}
-                  onChange={(e) => setNewNameEn(e.target.value)}
-                  placeholder="Nome inglese (opzionale)"
-                  className="bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
-                />
-                <input
-                  required
-                  type="text"
-                  value={newPrice}
-                  onChange={(e) => setNewPrice(e.target.value)}
-                  placeholder="Prezzo € (es. 12.50)*"
-                  className="bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
-                />
-                <input
-                  required
-                  type="text"
-                  value={newCategory}
-                  onChange={(e) => setNewCategory(e.target.value)}
-                  placeholder="Categoria (es. Primi, Pizze)"
-                  className="bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
-                />
-              </div>
-              <div className="flex flex-col sm:flex-row gap-2.5">
-                <input
-                  type="text"
-                  value={newDesc}
-                  onChange={(e) => setNewDesc(e.target.value)}
-                  placeholder="Descrizione / Ingredienti (opzionale)"
-                  className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
-                />
+            <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="font-bold text-sm text-amber-400 flex items-center gap-1.5">
+                  <Plus className="w-4 h-4" /> Aggiungi Piatti al Menu
+                </h2>
                 <button
-                  type="submit"
-                  className="bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold px-5 py-2 rounded-lg text-sm"
+                  type="button"
+                  onClick={() => setShowBulkImport(!showBulkImport)}
+                  className="flex items-center gap-1.5 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-xs font-bold px-3 py-1.5 rounded-lg text-amber-300"
                 >
-                  Aggiungi al Menu
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  {showBulkImport ? 'Chiudi Importazione Rapida' : 'Importa Lista Veloce (Copia/Incolla)'}
                 </button>
               </div>
-            </form>
+
+              {showBulkImport ? (
+                <form onSubmit={handleBulkImport} className="space-y-2.5 pt-2 border-t border-neutral-800">
+                  <p className="text-xs text-neutral-400">
+                    Inserisci un piatto per riga nel formato:{' '}
+                    <code className="text-amber-300">Categoria | Nome Piatto | Prezzo | Descrizione (opzionale)</code>
+                  </p>
+                  <textarea
+                    required
+                    rows={5}
+                    value={bulkText}
+                    onChange={(e) => setBulkText(e.target.value)}
+                    placeholder={`Pizze | Margherita | 6.50 | Pomodoro, mozzarella, basilico\nPizze | Diavola | 8.00 | Pomodoro, mozzarella, salame piccante\nBibite | Acqua Naturale 75cl | 2.50`}
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-lg p-3 text-xs font-mono text-white"
+                  />
+                  <button
+                    type="submit"
+                    disabled={bulkImporting}
+                    className="bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold px-5 py-2 rounded-lg text-xs"
+                  >
+                    {bulkImporting ? 'Importazione in corso...' : 'Importa Tutti i Piatti Ora'}
+                  </button>
+                </form>
+              ) : (
+                <form onSubmit={handleAddDish} className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                    <input
+                      required
+                      type="text"
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      placeholder="Nome piatto (IT)*"
+                      className="bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
+                    />
+                    <input
+                      type="text"
+                      value={newNameEn}
+                      onChange={(e) => setNewNameEn(e.target.value)}
+                      placeholder="Nome inglese (opzionale)"
+                      className="bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
+                    />
+                    <input
+                      required
+                      type="text"
+                      value={newPrice}
+                      onChange={(e) => setNewPrice(e.target.value)}
+                      placeholder="Prezzo € (es. 12.50)*"
+                      className="bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
+                    />
+                    <input
+                      required
+                      type="text"
+                      value={newCategory}
+                      onChange={(e) => setNewCategory(e.target.value)}
+                      placeholder="Categoria (es. Primi, Pizze)"
+                      className="bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2.5">
+                    <input
+                      type="text"
+                      value={newDesc}
+                      onChange={(e) => setNewDesc(e.target.value)}
+                      placeholder="Descrizione / Ingredienti (opzionale)"
+                      className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
+                    />
+                    <button
+                      type="submit"
+                      className="bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold px-5 py-2 rounded-lg text-sm"
+                    >
+                      Aggiungi al Menu
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
 
             <div className="space-y-2.5">
               {menuItems.map((item) => (
@@ -691,7 +817,7 @@ function AdminContent() {
               className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 space-y-3.5 h-fit"
             >
               <h2 className="font-bold text-sm text-amber-400 flex items-center gap-1.5">
-                <Settings className="w-4 h-4" /> Configurazione Scudo, WiFi &amp; PIN
+                <Settings className="w-4 h-4" /> Configurazione Scudo, WiFi, Coperto &amp; PIN
               </h2>
               <div>
                 <label className="block text-xs text-neutral-400 mb-1">
@@ -735,15 +861,27 @@ function AdminContent() {
                   className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
                 />
               </div>
-              <div>
-                <label className="block text-xs text-neutral-400 mb-1">PIN Accesso Dashboard Titolare</label>
-                <input
-                  type="text"
-                  required
-                  value={newPin}
-                  onChange={(e) => setNewPin(e.target.value)}
-                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
-                />
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-xs text-neutral-400 mb-1">Costo Coperto € (0 = disattivato)</label>
+                  <input
+                    type="text"
+                    value={coverCharge}
+                    onChange={(e) => setCoverCharge(e.target.value)}
+                    placeholder="es. 2.00"
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-neutral-400 mb-1">PIN Accesso Dashboard</label>
+                  <input
+                    type="text"
+                    required
+                    value={newPin}
+                    onChange={(e) => setNewPin(e.target.value)}
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
               </div>
               <button
                 type="submit"
