@@ -1,4 +1,8 @@
+'use client';
+
+import { useEffect } from 'react';
 import Link from 'next/link';
+import { supabase } from '@/lib/supabase';
 import {
   ShieldCheck,
   QrCode,
@@ -12,6 +16,10 @@ import {
 } from 'lucide-react';
 
 export default function HomePage() {
+  useEffect(() => {
+    supabase.rpc('reset_demo_restaurant');
+  }, []);
+
   const whatsappDemoUrl = `https://wa.me/393464972612?text=${encodeURIComponent(
     'Ciao! Vorrei attivare RistoCore o prenotare una demo gratuita per il mio locale.'
   )}`;

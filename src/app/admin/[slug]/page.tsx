@@ -234,7 +234,6 @@ function AdminContent() {
     }
   };
 
-  // Importazione massiva: "Categoria | Nome Piatto | Prezzo | Descrizione"
   const handleBulkImport = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!restaurant || !bulkText.trim()) return;
@@ -347,6 +346,19 @@ function AdminContent() {
     a.click();
   };
 
+  const handleResetDemo = async () => {
+    if (slug !== 'trattoria-demo') return;
+    await supabase.rpc('reset_demo_restaurant');
+    if (restaurant) {
+      await loadDashboardData(restaurant.id);
+      setTableCount(10);
+      setWifiPassword('Ospiti2026');
+      setWelcomePromo('Mostra questa schermata al cameriere per un caffè o amaro offerto!');
+      setCoverCharge('2');
+      setNewPin('1234');
+    }
+  };
+
   // Calcolo Chiusura Cassa filtrata
   const now = new Date();
   const filteredOrders = ordersList.filter((o) => {
@@ -440,6 +452,14 @@ function AdminContent() {
           </div>
 
           <div className="flex flex-wrap gap-2.5">
+            {slug === 'trattoria-demo' && (
+              <button
+                onClick={handleResetDemo}
+                className="bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-red-300 px-3 py-2 rounded-xl text-xs font-bold"
+              >
+                ↻ Azzera Demo
+              </button>
+            )}
             <div className="bg-neutral-800/80 border border-neutral-700 px-3 py-2 rounded-xl">
               <div className="flex items-center justify-between gap-2 text-[11px] text-neutral-400">
                 <span className="flex items-center gap-1">
