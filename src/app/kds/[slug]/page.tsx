@@ -1,202 +1,261 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { Bell, CheckCircle, Clock, Flame, Wifi } from 'lucide-react';
+import { Bell, CheckCircle, Clock, Flame, Volume2 } from 'lucide-react';
 
-function KitchenContent() {
+interface OrderItem {
+  name: string;
+  quantity: number;
+  price: number;
+}
+
+interface Order {
+  id: string;
+  table_number: string;
+  items: OrderItem[];
+  total: number;
+  notes?: string;
+  status: string;
+  created_at: string;
+}
+
+interface ServiceCall {
+  id: string;
+  table_number: string;
+  call_type: string;
+  status: string;
+  created_at: string;
+}
+
+export default function KDSPage() {
   const params = useParams();
-  const slug = params.slug as string;
+  const slug = decodeURIComponent(params.slug as string);
 
-  const [restaurant, setRestaurant] = useState<any>(null);
-  const [orders, setOrders] = useState<any[]>([]);
+  const [restaurantId, setRestaurantId] = useState<string | null>(null);
+  const [restaurantName, setRestaurantName] = useState('');
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [calls, setCalls] = useState<ServiceCall[]>([]);
   const [audioEnabled, setAudioEnabled] = useState(false);
 
-  const playAlertSound = () => {
+  const playDing = () => {
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = 'triangle';
+      osc.type = 'sine';
       osc.frequency.setValueAtTime(880, ctx.currentTime);
-      osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.15);
-      gain.gain.setValueAtTime(0.5, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start();
-      osc.stop(ctx.currentTime + 0.5);
-    } catch (e) {
-      console.error(e);
+      osc.stop(ctx.currentTime + 0.35);
+    } catch {
+      // ignore audio block
     }
   };
 
   useEffect(() => {
-    let channel: any;
-    let isMounted = true;
-
-    async function initKDS() {
+    async function init() {
       const { data: rest } = await supabase
         .from('restaurants')
-        .select('*')
+        .select('id, name')
         .eq('slug', slug)
         .single();
 
-      if (!rest || !isMounted) return;
-      setRestaurant(rest);
+      if (!rest) return;
+      setRestaurantId(rest.id);
+      setRestaurantName(rest.name);
 
-      const { data: existingOrders } = await supabase
+      const { data: initialOrders } = await supabase
         .from('orders')
         .select('*')
         .eq('restaurant_id', rest.id)
         .neq('status', 'completed')
         .order('created_at', { ascending: true });
 
-      if (!isMounted) return;
-      setOrders(existingOrders || []);
+      if (initialOrders) setOrders(initialOrders);
 
-      const uniqueChannelName = `kitchen-orders-${rest.id}-${Date.now()}`;
-      channel = supabase
-        .channel(uniqueChannelName)
+      const { data: initialCalls } = await supabase
+        .from('service_calls')
+        .select('*')
+        .eq('restaurant_id', rest.id)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: true });
+
+      if (initialCalls) setCalls(initialCalls);
+
+      const channel = supabase
+        .channel(`kds-${rest.id}`)
         .on(
           'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'orders',
-            filter: `restaurant_id=eq.${rest.id}`,
-          },
+          { event: '*', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${rest.id}` },
           (payload) => {
-            setOrders((prev) => [...prev, payload.new]);
-            playAlertSound();
+            if (payload.eventType === 'INSERT') {
+              setOrders((prev) => [...prev, payload.new as Order]);
+              playDing();
+            } else if (payload.eventType === 'UPDATE') {
+              const updated = payload.new as Order;
+              if (updated.status === 'completed') {
+                setOrders((prev) => prev.filter((o) => o.id !== updated.id));
+              } else {
+                setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+              }
+            }
           }
         )
         .on(
           'postgres_changes',
-          {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'orders',
-            filter: `restaurant_id=eq.${rest.id}`,
-          },
+          { event: '*', schema: 'public', table: 'service_calls', filter: `restaurant_id=eq.${rest.id}` },
           (payload) => {
-            setOrders((prev) =>
-              prev
-                .map((o) => (o.id === payload.new.id ? payload.new : o))
-                .filter((o) => o.status !== 'completed')
-            );
+            if (payload.eventType === 'INSERT') {
+              setCalls((prev) => [...prev, payload.new as ServiceCall]);
+              playDing();
+            } else if (payload.eventType === 'UPDATE') {
+              const updated = payload.new as ServiceCall;
+              if (updated.status === 'resolved') {
+                setCalls((prev) => prev.filter((c) => c.id !== updated.id));
+              }
+            }
           }
         )
         .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
     }
-
-    initKDS();
-
-    return () => {
-      isMounted = false;
-      if (channel) supabase.removeChannel(channel);
-    };
+    init();
   }, [slug]);
 
-  const updateOrderStatus = async (orderId: string, newStatus: string) => {
-    await supabase.from('orders').update({ status: newStatus }).eq('id', orderId);
-    if (newStatus === 'completed') {
-      setOrders((prev) => prev.filter((o) => o.id !== orderId));
+  const updateOrderStatus = async (id: string, status: string) => {
+    await supabase.from('orders').update({ status }).eq('id', id);
+    if (status === 'completed') {
+      setOrders((prev) => prev.filter((o) => o.id !== id));
     } else {
-      setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
+      setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, status } : o)));
     }
   };
 
-  if (!restaurant) return <div className="p-10 text-white bg-black min-h-screen">Connessione cucina...</div>;
+  const resolveCall = async (id: string) => {
+    await supabase.from('service_calls').update({ status: 'resolved' }).eq('id', id);
+    setCalls((prev) => prev.filter((c) => c.id !== id));
+  };
+
+  const formatCallLabel = (type: string) => {
+    if (type === 'bill_card') return 'Chiede il Conto (CARTA / POS)';
+    if (type === 'bill_cash') return 'Chiede il Conto (CONTANTI)';
+    return 'Chiama Cameriere al Tavolo';
+  };
+
+  if (!restaurantId) {
+    return <div className="min-h-screen bg-neutral-950 text-white p-6">Connessione KDS...</div>;
+  }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white p-6">
-      <div className="flex flex-wrap justify-between items-center border-b border-zinc-800 pb-4 mb-6 gap-4">
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 p-4 sm:p-6">
+      {/* Top Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-neutral-800 pb-4 mb-6">
         <div>
-          <h1 className="text-2xl font-black tracking-tight flex items-center gap-2">
-            <Flame className="text-amber-500" /> KDS CUCINA — {restaurant.name}
-          </h1>
-          <p className="text-xs text-emerald-400 flex items-center gap-1 mt-1 font-semibold">
-            <Wifi size={14} /> Sistema Live Connesso H24 • Ordini attivi: {orders.length}
-          </p>
+          <h1 className="text-2xl font-bold text-amber-400">KDS Live • {restaurantName}</h1>
+          <p className="text-xs text-neutral-400">Ordini attivi: {orders.length} • Avvisi sala: {calls.length}</p>
         </div>
 
         <button
           onClick={() => {
             setAudioEnabled(true);
-            playAlertSound();
+            playDing();
           }}
-          className={`px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 ${
-            audioEnabled ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-black animate-pulse'
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm ${
+            audioEnabled ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-neutral-950'
           }`}
         >
-          <Bell size={18} />
-          {audioEnabled ? 'Audio Comande Attivo' : 'Clicca per Attivare Suono Comande'}
+          <Volume2 className="w-4 h-4" />
+          {audioEnabled ? 'Audio Attivo' : 'Attiva Suono Comande'}
         </button>
       </div>
 
-      {orders.length === 0 ? (
-        <div className="text-center py-24 text-zinc-500">
-          <p className="text-xl font-bold">Nessuna comanda in coda</p>
-          <p className="text-sm mt-1">Appena un tavolo ordina dal QR, la comanda apparirà qui con segnale acustico.</p>
+      {/* Avvisi Sala (Cameriere / Conto) */}
+      {calls.length > 0 && (
+        <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {calls.map((call) => (
+            <div
+              key={call.id}
+              className="bg-sky-950/70 border border-sky-500 rounded-xl p-4 flex items-center justify-between gap-3"
+            >
+              <div className="flex items-center gap-3">
+                <Bell className="w-6 h-6 text-sky-400 shrink-0" />
+                <div>
+                  <p className="font-bold text-white">{call.table_number}</p>
+                  <p className="text-xs text-sky-300">{formatCallLabel(call.call_type)}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => resolveCall(call.id)}
+                className="bg-sky-500 hover:bg-sky-400 text-neutral-950 font-bold text-xs px-3 py-2 rounded-lg"
+              >
+                Gestito
+              </button>
+            </div>
+          ))}
         </div>
+      )}
+
+      {/* Griglia Comande Cucina */}
+      {orders.length === 0 ? (
+        <div className="text-center text-neutral-500 py-20">Nessuna comanda in attesa.</div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {orders.map((order) => (
             <div
               key={order.id}
-              className={`rounded-2xl border-2 p-5 flex flex-col justify-between ${
-                order.status === 'pending'
-                  ? 'bg-zinc-900 border-amber-500 shadow-lg shadow-amber-500/10'
-                  : 'bg-zinc-900 border-blue-500'
+              className={`rounded-2xl border p-4 flex flex-col justify-between ${
+                order.status === 'preparing'
+                  ? 'bg-amber-950/20 border-amber-500/60'
+                  : 'bg-neutral-900 border-neutral-800'
               }`}
             >
               <div>
-                <div className="flex justify-between items-center border-b border-zinc-800 pb-3 mb-3">
-                  <span className="text-xl font-black text-amber-400">{order.table_number}</span>
-                  <span className="text-xs bg-zinc-800 px-2.5 py-1 rounded-lg flex items-center gap-1 text-zinc-300">
-                    <Clock size={12} />
-                    {new Date(order.created_at).toLocaleTimeString('it-IT', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
+                <div className="flex items-center justify-between border-b border-neutral-800 pb-2.5 mb-3">
+                  <span className="text-lg font-extrabold text-amber-400">{order.table_number}</span>
+                  <span className="text-xs text-neutral-400 flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5" />
+                    {new Date(order.created_at).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
                   </span>
                 </div>
 
-                <ul className="space-y-3 my-4">
-                  {order.items?.map((item: any, idx: number) => (
-                    <li key={idx} className="border-b border-zinc-800/60 pb-2">
-                      <div className="flex justify-between font-bold text-base">
-                        <span>
-                          <span className="text-amber-400 mr-2">{item.qty}x</span>
-                          {item.name}
-                        </span>
-                      </div>
-                      {item.note && (
-                        <p className="text-xs bg-red-500/20 text-red-300 px-2 py-1 rounded mt-1 font-semibold">
-                          NOTA: {item.note}
-                        </p>
-                      )}
+                <ul className="space-y-2 mb-3">
+                  {order.items?.map((item, idx) => (
+                    <li key={idx} className="flex justify-between text-sm">
+                      <span>
+                        <strong className="text-amber-400">{item.quantity}x</strong> {item.name}
+                      </span>
                     </li>
                   ))}
                 </ul>
+
+                {order.notes && (
+                  <div className="bg-red-950/50 border border-red-500/40 text-red-200 text-xs p-2.5 rounded-lg mb-3">
+                    <strong>Note:</strong> {order.notes}
+                  </div>
+                )}
               </div>
 
-              <div className="pt-3 flex flex-col gap-2">
-                {order.status === 'pending' && (
-                  <button
-                    onClick={() => updateOrderStatus(order.id, 'preparing')}
-                    className="w-full bg-blue-600 hover:bg-blue-500 text-white font-extrabold py-3 rounded-xl text-sm"
-                  >
-                    Inizia Preparazione
-                  </button>
-                )}
+              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-neutral-800">
+                <button
+                  onClick={() => updateOrderStatus(order.id, 'preparing')}
+                  className="flex items-center justify-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-bold py-2.5 rounded-lg"
+                >
+                  <Flame className="w-4 h-4" />
+                  In Preparazione
+                </button>
                 <button
                   onClick={() => updateOrderStatus(order.id, 'completed')}
-                  className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold py-3 rounded-xl text-sm flex items-center justify-center gap-2"
+                  className="flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2.5 rounded-lg"
                 >
-                  <CheckCircle size={18} /> Segna Pronto / Consegnato
+                  <CheckCircle className="w-4 h-4" />
+                  Servito
                 </button>
               </div>
             </div>
@@ -204,13 +263,5 @@ function KitchenContent() {
         </div>
       )}
     </div>
-  );
-}
-
-export default function KitchenDisplayPage() {
-  return (
-    <Suspense fallback={<div className="p-10 text-white bg-black min-h-screen">Caricamento KDS...</div>}>
-      <KitchenContent />
-    </Suspense>
   );
 }
