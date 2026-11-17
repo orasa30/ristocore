@@ -24,6 +24,7 @@ interface Restaurant {
   slug: string;
   admin_pin: string;
   google_review_url: string;
+  table_count?: number;
 }
 
 interface MenuItem {
@@ -97,6 +98,7 @@ function AdminContent() {
         setRestaurant(data);
         setGoogleUrl(data.google_review_url || '');
         setNewPin(data.admin_pin || '1234');
+        setTableCount(data.table_count || 10);
       }
     }
     fetchRestaurant();
@@ -184,6 +186,15 @@ function AdminContent() {
     setSettingsSaved(true);
     setTimeout(() => setSettingsSaved(false), 3000);
   };
+  const updateTableCount = async (count: number) => {
+  const validCount = Math.max(1, Math.min(100, count || 1));
+  setTableCount(validCount);
+  if (!restaurant) return;
+  await supabase
+    .from('restaurants')
+    .update({ table_count: validCount })
+    .eq('id', restaurant.id);
+};
 
   if (!restaurant) {
     return <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center">Caricamento pannello...</div>;
@@ -543,7 +554,7 @@ function AdminContent() {
                   min={1}
                   max={60}
                   value={tableCount}
-                  onChange={(e) => setTableCount(Number(e.target.value))}
+                  onChange={(e) => updateTableCount(Number(e.target.value))}
                   className="w-20 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm text-center"
                 />
               </div>
