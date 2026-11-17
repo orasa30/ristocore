@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { Bell, CheckCircle, Clock, Flame, Volume2 } from 'lucide-react';
@@ -29,7 +29,7 @@ interface ServiceCall {
   created_at: string;
 }
 
-export default function KDSPage() {
+function KDSContent() {
   const params = useParams();
   const slug = decodeURIComponent(params.slug as string);
 
@@ -263,5 +263,12 @@ export default function KDSPage() {
         </div>
       )}
     </div>
+  );
+}
+export default function KDSPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-neutral-950 text-white p-6">Connessione KDS...</div>}>
+      <KDSContent />
+    </Suspense>
   );
 }
