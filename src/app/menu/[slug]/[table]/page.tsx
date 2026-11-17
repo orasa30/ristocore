@@ -15,6 +15,10 @@ import {
   Banknote,
   Globe,
   X,
+  Wifi,
+  Gift,
+  MessageCircle,
+  Copy,
 } from 'lucide-react';
 
 interface MenuItem {
@@ -32,6 +36,9 @@ interface Restaurant {
   name: string;
   slug: string;
   google_review_url?: string;
+  wifi_password?: string;
+  welcome_promo?: string;
+  whatsapp_number?: string;
 }
 
 function MenuContent() {
@@ -48,7 +55,7 @@ function MenuContent() {
   const [orderSent, setOrderSent] = useState(false);
 
   // Modali
-  const [activeModal, setActiveModal] = useState<'service' | 'review' | 'booking' | null>(null);
+  const [activeModal, setActiveModal] = useState<'service' | 'review' | 'booking' | 'wifi' | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState('');
 
   // Stato Scudo Recensioni
@@ -63,6 +70,12 @@ function MenuContent() {
   const [bookingDate, setBookingDate] = useState('');
   const [bookingTime, setBookingTime] = useState('20:30');
   const [bookingNotes, setBookingNotes] = useState('');
+
+  // Stato WiFi & Regalo Benvenuto (CRM)
+  const [custName, setCustName] = useState('');
+  const [custPhone, setCustPhone] = useState('');
+  const [custConsent, setCustConsent] = useState(true);
+  const [wifiUnlocked, setWifiUnlocked] = useState(false);
 
   useEffect(() => {
     async function loadData() {
@@ -200,6 +213,25 @@ function MenuContent() {
     );
   };
 
+  const submitWifiCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!restaurant || !custName || !custPhone) return;
+    await supabase.from('customers').insert({
+      restaurant_id: restaurant.id,
+      name: custName,
+      phone: custPhone,
+      table_number: table,
+      marketing_consent: custConsent,
+    });
+    setWifiUnlocked(true);
+  };
+
+  const copyWifi = () => {
+    if (!restaurant?.wifi_password) return;
+    navigator.clipboard.writeText(restaurant.wifi_password);
+    triggerToast(lang === 'it' ? 'Password WiFi copiata!' : 'WiFi password copied!');
+  };
+
   const triggerToast = (msg: string) => {
     setFeedbackMsg(msg);
     setTimeout(() => setFeedbackMsg(''), 4500);
@@ -214,6 +246,10 @@ function MenuContent() {
   }
 
   const categories = Array.from(new Set(items.map((i) => i.category)));
+  const cleanRestWa = (restaurant.whatsapp_number || '').replace(/\D/g, '');
+  const waWelcomeMsg = encodeURIComponent(
+    `Ciao ${restaurant.name}! Sono ${custName} (${table}), ho appena attivato il mio buono benvenuto!`
+  );
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 pb-32">
@@ -224,13 +260,22 @@ function MenuContent() {
             <h1 className="text-lg font-bold text-amber-400">{restaurant.name}</h1>
             <p className="text-xs text-neutral-400">{table}</p>
           </div>
-          <button
-            onClick={() => setLang(lang === 'it' ? 'en' : 'it')}
-            className="flex items-center gap-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 px-3 py-1.5 rounded-full border border-neutral-700"
-          >
-            <Globe className="w-3.5 h-3.5 text-amber-400" />
-            {lang === 'it' ? 'EN' : 'IT'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveModal('wifi')}
+              className="flex items-center gap-1.5 text-xs bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 font-semibold px-3 py-1.5 rounded-full border border-amber-500/40"
+            >
+              <Wifi className="w-3.5 h-3.5" />
+              {lang === 'it' ? 'WiFi & Regalo' : 'WiFi & Gift'}
+            </button>
+            <button
+              onClick={() => setLang(lang === 'it' ? 'en' : 'it')}
+              className="flex items-center gap-1 text-xs bg-neutral-800 hover:bg-neutral-700 px-2.5 py-1.5 rounded-full border border-neutral-700"
+            >
+              <Globe className="w-3.5 h-3.5 text-amber-400" />
+              {lang === 'it' ? 'EN' : 'IT'}
+            </button>
+          </div>
         </div>
 
         {/* Barra Azioni Rapide Tavolo */}
@@ -511,6 +556,103 @@ function MenuContent() {
               {lang === 'it' ? 'Conferma Richiesta' : 'Request Booking'}
             </button>
           </form>
+        </div>
+      )}
+
+      {/* MODALE 4: WiFi Gratis & Regalo Benvenuto (CRM WhatsApp) */}
+      {activeModal === 'wifi' && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-end sm:items-center justify-center p-4">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-md p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-lg flex items-center gap-2 text-amber-400">
+                <Gift className="w-5 h-5" />
+                {lang === 'it' ? 'WiFi & Regalo Benvenuto' : 'WiFi & Welcome Gift'}
+              </h3>
+              <button onClick={() => setActiveModal(null)}><X className="w-5 h-5 text-neutral-400" /></button>
+            </div>
+
+            {!wifiUnlocked ? (
+              <form onSubmit={submitWifiCustomer} className="space-y-3">
+                <p className="text-xs text-neutral-300">
+                  {lang === 'it'
+                    ? 'Inserisci il tuo nome e WhatsApp per sbloccare subito la password del WiFi e il buono benvenuto del locale:'
+                    : 'Enter your name and WhatsApp to unlock free WiFi and your welcome gift:'}
+                </p>
+                <input
+                  required
+                  type="text"
+                  value={custName}
+                  onChange={(e) => setCustName(e.target.value)}
+                  placeholder={lang === 'it' ? 'Il tuo Nome' : 'Your Name'}
+                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg p-2.5 text-sm"
+                />
+                <input
+                  required
+                  type="tel"
+                  value={custPhone}
+                  onChange={(e) => setCustPhone(e.target.value)}
+                  placeholder={lang === 'it' ? 'Numero WhatsApp (es. 3401234567)' : 'WhatsApp Number'}
+                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg p-2.5 text-sm"
+                />
+                <label className="flex items-start gap-2 text-[11px] text-neutral-400 cursor-pointer">
+                  <input
+                    required
+                    type="checkbox"
+                    checked={custConsent}
+                    onChange={(e) => setCustConsent(e.target.checked)}
+                    className="mt-0.5 accent-amber-500"
+                  />
+                  <span>
+                    {lang === 'it'
+                      ? 'Acconsento a ricevere promozioni e novità esclusivi su WhatsApp dal ristorante (GDPR).'
+                      : 'I agree to receive exclusive WhatsApp promotions from the restaurant.'}
+                  </span>
+                </label>
+                <button
+                  type="submit"
+                  className="w-full bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold py-2.5 rounded-xl"
+                >
+                  {lang === 'it' ? 'Sblocca WiFi & Buono' : 'Unlock WiFi & Gift'}
+                </button>
+              </form>
+            ) : (
+              <div className="space-y-4">
+                <div className="bg-neutral-800 border border-neutral-700 rounded-xl p-3.5 flex items-center justify-between">
+                  <div>
+                    <p className="text-[11px] text-neutral-400 uppercase">Password WiFi Locale</p>
+                    <p className="text-lg font-extrabold text-white tracking-wide">
+                      {restaurant.wifi_password || 'Ospiti2026'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={copyWifi}
+                    className="bg-neutral-700 hover:bg-neutral-600 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5"
+                  >
+                    <Copy className="w-3.5 h-3.5" /> Copia
+                  </button>
+                </div>
+
+                <div className="bg-emerald-950/50 border border-emerald-500/40 rounded-xl p-3.5 space-y-1">
+                  <p className="text-xs font-bold text-emerald-400">🎁 Il tuo Buono Benvenuto:</p>
+                  <p className="text-sm text-neutral-100">
+                    {restaurant.welcome_promo || 'Mostra questa schermata al cameriere per un caffè o amaro offerto!'}
+                  </p>
+                </div>
+
+                {cleanRestWa && (
+                  <a
+                    href={`https://wa.me/${cleanRestWa}?text=${waWelcomeMsg}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    {lang === 'it' ? 'Salva Promo su WhatsApp' : 'Save Promo on WhatsApp'}
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

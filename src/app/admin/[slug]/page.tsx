@@ -16,6 +16,9 @@ import {
   TrendingUp,
   Settings,
   ExternalLink,
+  Users,
+  MessageCircle,
+  Download,
 } from 'lucide-react';
 
 interface Restaurant {
@@ -25,6 +28,9 @@ interface Restaurant {
   admin_pin: string;
   google_review_url: string;
   table_count?: number;
+  wifi_password?: string;
+  welcome_promo?: string;
+  whatsapp_number?: string;
 }
 
 interface MenuItem {
@@ -57,6 +63,15 @@ interface Review {
   created_at: string;
 }
 
+interface Customer {
+  id: string;
+  name: string;
+  phone: string;
+  table_number?: string;
+  marketing_consent: boolean;
+  created_at: string;
+}
+
 function AdminContent() {
   const params = useParams();
   const slug = decodeURIComponent(params.slug as string);
@@ -66,10 +81,11 @@ function AdminContent() {
   const [authenticated, setAuthenticated] = useState(false);
   const [pinError, setPinError] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<'menu' | 'bookings' | 'reviews' | 'qr'>('menu');
+  const [activeTab, setActiveTab] = useState<'menu' | 'bookings' | 'customers' | 'reviews' | 'qr'>('menu');
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [totalRevenue, setTotalRevenue] = useState(0);
   const [totalOrdersCount, setTotalOrdersCount] = useState(0);
 
@@ -80,9 +96,15 @@ function AdminContent() {
   const [newPrice, setNewPrice] = useState('');
   const [newCategory, setNewCategory] = useState('Primi Piatti');
 
-  // Impostazioni & QR
+  // Impostazioni & QR & Promo WhatsApp
   const [googleUrl, setGoogleUrl] = useState('');
   const [newPin, setNewPin] = useState('');
+  const [wifiPassword, setWifiPassword] = useState('');
+  const [welcomePromo, setWelcomePromo] = useState('');
+  const [whatsappNumber, setWhatsappNumber] = useState('');
+  const [promoBroadcastText, setPromoBroadcastText] = useState(
+    'Ciao! Questo weekend ti aspettiamo con una sorpresa speciale riservata ai nostri clienti!'
+  );
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [tableCount, setTableCount] = useState(10);
 
@@ -99,22 +121,27 @@ function AdminContent() {
         setGoogleUrl(data.google_review_url || '');
         setNewPin(data.admin_pin || '1234');
         setTableCount(data.table_count || 10);
+        setWifiPassword(data.wifi_password || 'Ospiti2026');
+        setWelcomePromo(data.welcome_promo || 'Mostra questa schermata al cameriere per un caffè o amaro offerto!');
+        setWhatsappNumber(data.whatsapp_number || '');
       }
     }
     fetchRestaurant();
   }, [slug]);
 
   const loadDashboardData = async (restId: string) => {
-    const [{ data: menu }, { data: bks }, { data: revs }, { data: ords }] = await Promise.all([
+    const [{ data: menu }, { data: bks }, { data: revs }, { data: ords }, { data: custs }] = await Promise.all([
       supabase.from('menu_items').select('*').eq('restaurant_id', restId).order('category'),
       supabase.from('bookings').select('*').eq('restaurant_id', restId).order('booking_date', { ascending: true }),
       supabase.from('reviews').select('*').eq('restaurant_id', restId).order('created_at', { ascending: false }),
       supabase.from('orders').select('total').eq('restaurant_id', restId),
+      supabase.from('customers').select('*').eq('restaurant_id', restId).order('created_at', { ascending: false }),
     ]);
 
     if (menu) setMenuItems(menu);
     if (bks) setBookings(bks);
     if (revs) setReviews(revs);
+    if (custs) setCustomers(custs);
     if (ords) {
       setTotalOrdersCount(ords.length);
       setTotalRevenue(ords.reduce((sum, o) => sum + Number(o.total || 0), 0));
@@ -181,26 +208,50 @@ function AdminContent() {
     if (!restaurant) return;
     await supabase
       .from('restaurants')
-      .update({ google_review_url: googleUrl, admin_pin: newPin })
+      .update({
+        google_review_url: googleUrl,
+        admin_pin: newPin,
+        wifi_password: wifiPassword,
+        welcome_promo: welcomePromo,
+        whatsapp_number: whatsappNumber,
+      })
       .eq('id', restaurant.id);
     setSettingsSaved(true);
     setTimeout(() => setSettingsSaved(false), 3000);
   };
+
   const updateTableCount = async (count: number) => {
-  const validCount = Math.max(1, Math.min(100, count || 1));
-  setTableCount(validCount);
-  if (!restaurant) return;
-  await supabase
-    .from('restaurants')
-    .update({ table_count: validCount })
-    .eq('id', restaurant.id);
-};
+    const validCount = Math.max(1, Math.min(100, count || 1));
+    setTableCount(validCount);
+    if (!restaurant) return;
+    await supabase
+      .from('restaurants')
+      .update({ table_count: validCount })
+      .eq('id', restaurant.id);
+  };
+
+  const formatWaPhone = (raw: string) => {
+    const digits = raw.replace(/\D/g, '');
+    return digits.startsWith('39') ? digits : `39${digits}`;
+  };
+
+  const exportCustomersCsv = () => {
+    const header = 'Nome,Telefono,Tavolo,Consenso,Data\n';
+    const rows = customers
+      .map((c) => `"${c.name}","${c.phone}","${c.table_number || ''}","${c.marketing_consent ? 'SI' : 'NO'}","${new Date(c.created_at).toLocaleDateString('it-IT')}"`)
+      .join('\n');
+    const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `clienti-${slug}.csv`;
+    a.click();
+  };
 
   if (!restaurant) {
     return <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center">Caricamento pannello...</div>;
   }
 
-  // Schermata Login PIN
   if (!authenticated) {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center p-4">
@@ -264,14 +315,20 @@ function AdminContent() {
             </div>
           </div>
 
-          <div className="flex gap-3">
-            <div className="bg-neutral-800/80 border border-neutral-700 px-3.5 py-2 rounded-xl">
+          <div className="flex flex-wrap gap-2.5">
+            <div className="bg-neutral-800/80 border border-neutral-700 px-3 py-2 rounded-xl">
               <p className="text-[11px] text-neutral-400 flex items-center gap-1">
                 <TrendingUp className="w-3 h-3 text-emerald-400" /> Ordini Totali
               </p>
               <p className="font-bold text-sm">{totalOrdersCount} • € {totalRevenue.toFixed(2)}</p>
             </div>
-            <div className="bg-neutral-800/80 border border-neutral-700 px-3.5 py-2 rounded-xl">
+            <div className="bg-neutral-800/80 border border-neutral-700 px-3 py-2 rounded-xl">
+              <p className="text-[11px] text-neutral-400 flex items-center gap-1">
+                <Users className="w-3 h-3 text-sky-400" /> Contatti WA
+              </p>
+              <p className="font-bold text-sm">{customers.length}</p>
+            </div>
+            <div className="bg-neutral-800/80 border border-neutral-700 px-3 py-2 rounded-xl">
               <p className="text-[11px] text-neutral-400 flex items-center gap-1">
                 <ShieldAlert className="w-3 h-3 text-amber-400" /> Reclami Bloccati
               </p>
@@ -281,7 +338,7 @@ function AdminContent() {
         </div>
 
         {/* Navigation Tabs */}
-        <div className="max-w-5xl mx-auto grid grid-cols-4 gap-2 mt-4">
+        <div className="max-w-5xl mx-auto grid grid-cols-2 sm:grid-cols-5 gap-2 mt-4">
           <button
             onClick={() => setActiveTab('menu')}
             className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold ${
@@ -297,6 +354,14 @@ function AdminContent() {
             }`}
           >
             <Calendar className="w-4 h-4" /> Prenotazioni ({bookings.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('customers')}
+            className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold ${
+              activeTab === 'customers' ? 'bg-amber-500 text-neutral-950' : 'bg-neutral-800 text-neutral-300'
+            }`}
+          >
+            <Users className="w-4 h-4" /> Clienti & WA ({customers.length})
           </button>
           <button
             onClick={() => setActiveTab('reviews')}
@@ -416,63 +481,141 @@ function AdminContent() {
           </div>
         )}
 
-        {/* TAB 2: PRENOTAZIONI */}
+        {/* TAB 2: PRENOTAZIONI CON CONFERMA WHATSAPP */}
         {activeTab === 'bookings' && (
           <div className="space-y-3">
             {bookings.length === 0 ? (
               <p className="text-center text-neutral-500 py-12">Nessuna prenotazione ricevuta.</p>
             ) : (
-              bookings.map((b) => (
-                <div
-                  key={b.id}
-                  className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3"
-                >
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold">{b.customer_name}</span>
-                      <span className="text-xs bg-neutral-800 px-2 py-0.5 rounded text-amber-400">
-                        {b.guests} persone
-                      </span>
-                    </div>
-                    <p className="text-xs text-neutral-300 mt-1">
-                      📅 {b.booking_date} alle <strong>{b.booking_time}</strong> • 📞 {b.customer_phone}
-                    </p>
-                    {b.notes && <p className="text-xs text-neutral-400 mt-1">Note: {b.notes}</p>}
-                  </div>
+              bookings.map((b) => {
+                const waConfirmMsg = encodeURIComponent(
+                  `Ciao ${b.customer_name}! La tua prenotazione per ${b.guests} persone il ${b.booking_date} alle ${b.booking_time} da ${restaurant.name} è confermata. Ti aspettiamo!`
+                );
 
-                  <div className="flex items-center gap-2">
-                    {b.status === 'pending' ? (
-                      <>
-                        <button
-                          onClick={() => updateBookingStatus(b.id, 'confirmed')}
-                          className="flex items-center gap-1 bg-emerald-600 text-white text-xs font-bold px-3 py-2 rounded-lg"
-                        >
-                          <Check className="w-3.5 h-3.5" /> Conferma
-                        </button>
-                        <button
-                          onClick={() => updateBookingStatus(b.id, 'cancelled')}
-                          className="flex items-center gap-1 bg-red-600/80 text-white text-xs font-bold px-3 py-2 rounded-lg"
-                        >
-                          <X className="w-3.5 h-3.5" /> Rifiuta
-                        </button>
-                      </>
-                    ) : (
-                      <span
-                        className={`text-xs font-bold px-3 py-1 rounded-full ${
-                          b.status === 'confirmed' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'
-                        }`}
+                return (
+                  <div
+                    key={b.id}
+                    className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold">{b.customer_name}</span>
+                        <span className="text-xs bg-neutral-800 px-2 py-0.5 rounded text-amber-400">
+                          {b.guests} persone
+                        </span>
+                      </div>
+                      <p className="text-xs text-neutral-300 mt-1">
+                        📅 {b.booking_date} alle <strong>{b.booking_time}</strong> • 📞 {b.customer_phone}
+                      </p>
+                      {b.notes && <p className="text-xs text-neutral-400 mt-1">Note: {b.notes}</p>}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <a
+                        href={`https://wa.me/${formatWaPhone(b.customer_phone)}?text=${waConfirmMsg}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 text-xs font-bold px-3 py-2 rounded-lg"
                       >
-                        {b.status === 'confirmed' ? 'Confermata' : 'Annullata'}
-                      </span>
-                    )}
+                        <MessageCircle className="w-3.5 h-3.5" /> Rispondi su WA
+                      </a>
+
+                      {b.status === 'pending' ? (
+                        <>
+                          <button
+                            onClick={() => updateBookingStatus(b.id, 'confirmed')}
+                            className="flex items-center gap-1 bg-emerald-600 text-white text-xs font-bold px-3 py-2 rounded-lg"
+                          >
+                            <Check className="w-3.5 h-3.5" /> Conferma
+                          </button>
+                          <button
+                            onClick={() => updateBookingStatus(b.id, 'cancelled')}
+                            className="flex items-center gap-1 bg-red-600/80 text-white text-xs font-bold px-3 py-2 rounded-lg"
+                          >
+                            <X className="w-3.5 h-3.5" /> Rifiuta
+                          </button>
+                        </>
+                      ) : (
+                        <span
+                          className={`text-xs font-bold px-3 py-1 rounded-full ${
+                            b.status === 'confirmed' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'
+                          }`}
+                        >
+                          {b.status === 'confirmed' ? 'Confermata' : 'Annullata'}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         )}
 
-        {/* TAB 3: SCUDO RECENSIONI & IMPOSTAZIONI */}
+        {/* TAB 3: CLIENTI CRM & PROMOZIONI WHATSAPP */}
+        {activeTab === 'customers' && (
+          <div className="space-y-5">
+            <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="font-bold text-sm text-amber-400">Messaggio Promozionale Rapido WhatsApp</h2>
+                  <p className="text-xs text-neutral-400">
+                    Personalizza il testo qui sotto e clicca &quot;Invia Promo WA&quot; accanto a qualsiasi cliente.
+                  </p>
+                </div>
+                {customers.length > 0 && (
+                  <button
+                    onClick={exportCustomersCsv}
+                    className="flex items-center gap-1.5 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-xs font-bold px-3 py-2 rounded-lg"
+                  >
+                    <Download className="w-3.5 h-3.5 text-amber-400" /> Esporta CSV ({customers.length})
+                  </button>
+                )}
+              </div>
+              <textarea
+                rows={2}
+                value={promoBroadcastText}
+                onChange={(e) => setPromoBroadcastText(e.target.value)}
+                className="w-full bg-neutral-800 border border-neutral-700 rounded-lg p-2.5 text-xs text-white"
+              />
+            </div>
+
+            {customers.length === 0 ? (
+              <p className="text-center text-neutral-500 py-10 text-sm">
+                Nessun contatto raccolto ancora. I clienti compaiono qui quando sbloccano WiFi &amp; Regalo al tavolo.
+              </p>
+            ) : (
+              <div className="space-y-2.5">
+                {customers.map((c) => {
+                  const personalizedPromo = encodeURIComponent(`Ciao ${c.name}! ${promoBroadcastText} — ${restaurant.name}`);
+                  return (
+                    <div
+                      key={c.id}
+                      className="bg-neutral-900 border border-neutral-800 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3"
+                    >
+                      <div>
+                        <p className="font-bold text-sm">
+                          {c.name} <span className="text-xs text-neutral-400 font-normal">• {c.table_number}</span>
+                        </p>
+                        <p className="text-xs text-amber-400">{c.phone}</p>
+                      </div>
+                      <a
+                        href={`https://wa.me/${formatWaPhone(c.phone)}?text=${personalizedPromo}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3.5 py-2 rounded-lg"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" /> Invia Promo WA
+                      </a>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 4: SCUDO RECENSIONI & IMPOSTAZIONI */}
         {activeTab === 'reviews' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="space-y-3">
@@ -499,10 +642,10 @@ function AdminContent() {
 
             <form
               onSubmit={saveSettings}
-              className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 space-y-4 h-fit"
+              className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 space-y-3.5 h-fit"
             >
               <h2 className="font-bold text-sm text-amber-400 flex items-center gap-1.5">
-                <Settings className="w-4 h-4" /> Configurazione Scudo Google & PIN
+                <Settings className="w-4 h-4" /> Configurazione Scudo, WiFi &amp; PIN
               </h2>
               <div>
                 <label className="block text-xs text-neutral-400 mb-1">
@@ -513,7 +656,36 @@ function AdminContent() {
                   required
                   value={googleUrl}
                   onChange={(e) => setGoogleUrl(e.target.value)}
-                  placeholder="https://g.page/r/..."
+                  className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-xs text-neutral-400 mb-1">Password WiFi Locale</label>
+                  <input
+                    type="text"
+                    value={wifiPassword}
+                    onChange={(e) => setWifiPassword(e.target.value)}
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-neutral-400 mb-1">WhatsApp Locale (es. 39340...)</label>
+                  <input
+                    type="text"
+                    value={whatsappNumber}
+                    onChange={(e) => setWhatsappNumber(e.target.value)}
+                    placeholder="393401234567"
+                    className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-neutral-400 mb-1">Messaggio Regalo Benvenuto al Tavolo</label>
+                <input
+                  type="text"
+                  value={welcomePromo}
+                  onChange={(e) => setWelcomePromo(e.target.value)}
                   className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm"
                 />
               </div>
@@ -537,7 +709,7 @@ function AdminContent() {
           </div>
         )}
 
-        {/* TAB 4: GENERATORE QR TAVOLI */}
+        {/* TAB 5: GENERATORE QR TAVOLI */}
         {activeTab === 'qr' && (
           <div className="space-y-5">
             <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
@@ -584,6 +756,7 @@ function AdminContent() {
     </div>
   );
 }
+
 export default function AdminDashboard() {
   return (
     <Suspense fallback={<div className="min-h-screen bg-neutral-950 text-white p-6">Caricamento pannello...</div>}>
