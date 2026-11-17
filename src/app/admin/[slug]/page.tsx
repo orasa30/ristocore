@@ -148,6 +148,43 @@ function AdminContent() {
     }
   };
 
+  useEffect(() => {
+    if (!authenticated || !restaurant) return;
+
+    const channel = supabase
+      .channel(`admin-live-${restaurant.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurant.id}` },
+        () => loadDashboardData(restaurant.id)
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'bookings', filter: `restaurant_id=eq.${restaurant.id}` },
+        () => loadDashboardData(restaurant.id)
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'reviews', filter: `restaurant_id=eq.${restaurant.id}` },
+        () => loadDashboardData(restaurant.id)
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'customers', filter: `restaurant_id=eq.${restaurant.id}` },
+        () => loadDashboardData(restaurant.id)
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'menu_items', filter: `restaurant_id=eq.${restaurant.id}` },
+        () => loadDashboardData(restaurant.id)
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [authenticated, restaurant]);
+
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (!restaurant) return;
@@ -216,6 +253,15 @@ function AdminContent() {
         whatsapp_number: whatsappNumber,
       })
       .eq('id', restaurant.id);
+
+    setRestaurant({
+      ...restaurant,
+      google_review_url: googleUrl,
+      admin_pin: newPin,
+      wifi_password: wifiPassword,
+      welcome_promo: welcomePromo,
+      whatsapp_number: whatsappNumber,
+    });
     setSettingsSaved(true);
     setTimeout(() => setSettingsSaved(false), 3000);
   };
