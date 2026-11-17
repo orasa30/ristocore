@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import {
@@ -56,7 +56,7 @@ interface Review {
   created_at: string;
 }
 
-export default function AdminDashboard() {
+function AdminContent() {
   const params = useParams();
   const slug = decodeURIComponent(params.slug as string);
 
@@ -571,5 +571,12 @@ export default function AdminDashboard() {
         )}
       </main>
     </div>
+  );
+}
+export default function AdminDashboard() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-neutral-950 text-white p-6">Caricamento pannello...</div>}>
+      <AdminContent />
+    </Suspense>
   );
 }
