@@ -260,7 +260,7 @@ function AdminContent() {
           available: true,
         };
       })
-      .filter(Boolean);
+      .filter((item): item is NonNullable<typeof item> => item !== null);
 
     if (payload.length > 0) {
       const { data } = await supabase.from('menu_items').insert(payload).select();
